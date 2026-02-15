@@ -1,0 +1,35 @@
+services:
+  qverisbot:
+    image: ghcr.io/vxwork/qverisbot-docker/qverisbot:linux_latest
+    container_name: qverisbot
+    restart: unless-stopped
+    
+    # 端口映射（可选）
+    # ports:
+    #   - "18789:18789"
+    
+    # ⚠️ 关键：挂载配置卷，避免重启丢失配置
+    volumes:
+      - ./config:/root/.openclaw      # 配置文件持久化
+      - ./extensions:/app/extensions  # 扩展插件持久化  
+      - ./skills:/app/skills          # Skills 持久化
+    
+    environment:
+      # 必要的 API Key（必须配置）
+      - QVERIS_API_KEY=${QVERIS_API_KEY:-your-api-key-here}
+      
+      # 可选配置
+      - NODE_ENV=production
+      - OPENCLAW_CONFIG_DIR=/root/.openclaw
+      - OPENCLAW_WORKSPACE_DIR=/root/.openclaw/workspace
+    
+    networks:
+      - qverisbot_network
+
+networks:
+  qverisbot_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.15.116.0/24
+          
