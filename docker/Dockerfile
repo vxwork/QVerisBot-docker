@@ -8,15 +8,20 @@ RUN curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && \
 # 安装 pnpm
 RUN npm install -g pnpm
 # Git 配置
-RUN git config --global url."https://github.com/".insteadOf git@github.com:
+# 配置git全局设置
+RUN git config --global --add url."https://github.com/".insteadOf git@github.com: \
+    && git config --global --add url."https://github.com/".insteadOf ssh://git@github.com/ \
+    && git config --global --add url."https://github.com/".insteadOf git@github.com:/ \
+    && git config --global --add safe.directory "*"
+
 WORKDIR /app
+
 RUN git clone https://github.com/QVerisAI/QVerisBot.git .
 # 安装依赖
-RUN pnpm install && pnpm ui:build && pnpm build
+RUN pnpm install && pnpm ui:build && pnpm build && pnpm openclaw setup
 # 暴露端口
 EXPOSE 18789
 # 使用入口脚本启动（关键修改）
 COPY docker/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["gateway"]
