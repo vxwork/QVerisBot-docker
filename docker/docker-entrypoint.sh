@@ -13,13 +13,12 @@ if [ ! -f /root/.openclaw/openclaw.json ]; then
     echo "{\"token\":\"$DEVICE_TOKEN\",\"createdAt\":\"$(date -Iseconds)\"}" > /root/.openclaw/pairing/device.json
     
     echo "✅ 已生成设备令牌"
-fi
 
-# 如果命令是 gateway，则启动
-if [ "$1" = "gateway" ]; then
-    echo "🚀 启动 QVerisBot Gateway..."
-    exec node dist/entry.js gateway run --bind loopback --verbose
+    exec pnpm openclaw gateway --allow-unconfigured --port 18789 --verbose
+else
+    echo "✅ 配置文件已存在，跳过初始化"
+    exec pnpm openclaw gateway --port 18789 --verbose
 fi
 
 # 其他命令直接执行
-exec "$@"
+#exec "$@"
