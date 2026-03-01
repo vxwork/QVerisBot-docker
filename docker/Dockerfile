@@ -1,6 +1,6 @@
 FROM almalinux:10.1-minimal
 RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
-RUN dnf install -y net-tools git curl python3 python3-pip && dnf clean all
+RUN dnf install -y net-tools git curl python3 python3-pip tar && dnf clean all
 # 安装 Node.js
 RUN curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && \
     dnf install -y nodejs && \
