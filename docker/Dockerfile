@@ -28,7 +28,7 @@ RUN pnpm install && pnpm ui:build && pnpm build && pnpm openclaw setup
 # 安装 Python 依赖
 RUN pip install matplotlib numpy reportlab
 
-# 预配置 matplotlib 使用中文
+# 预配置 matplotlib 使用中文（镜像构建时生成，容器运行时由 entrypoint 进一步确认）
 RUN mkdir -p /root/.config/matplotlib && \
     printf "font.family: sans-serif\nfont.sans-serif: Noto Sans CJK SC, DejaVu Sans\naxes.unicode_minus: False\n" \
         > /root/.config/matplotlib/matplotlibrc

@@ -40,9 +40,17 @@ QVeris is building the platform for connecting AI Agents to enterprise-grade ski
 ```bash
 git clone https://github.com/QVerisAI/QVerisBot.git
 cd QVerisBot-docker
+# build the image; it pre-populates /root/.config/matplotlib/matplotlibrc
 docker build -f docker/Dockerfile -t qverisbot:latest .
+# run the container; entrypoint will also ensure the file exists at startup
 docker run -d --name qverisbot qverisbot:latest
 ```
+
+> ⚠️ **Troubleshooting**: if you ever inspect the container and `/root/.config` is missing,
+> the image build step created the directory, but a later volume mount or runtime
+> change may have hidden it. The entrypoint script now recreates the
+> `matplotlibrc` automatically, so the config will always be available inside the
+> running container.
 
 ## Documentation
 
