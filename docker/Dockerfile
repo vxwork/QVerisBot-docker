@@ -3,16 +3,11 @@ RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
 RUN dnf install -y net-tools git curl python3 python3-pip tar && dnf clean all
 
 # 安装中文字体支持并刷新缓存
-# install fontconfig and unzip, then download Noto CJK fonts directly
-# from GitHub using the "latest" redirect so we don’t pin a release
-# version (avoids 404/HTTP 22 errors).
-RUN dnf install -y fontconfig unzip && \
+# EPEL provides a packaged set of Noto CJK fonts; install that instead of
+# downloading manually.  (Note: the package name is `google-noto-sans-cjk-fonts`.)
+RUN dnf install -y fontconfig epel-release && \
+    dnf install -y google-noto-sans-cjk-fonts && \
     dnf clean all && \
-    \
-    curl -fsSL -o /tmp/NotoSansSC.zip \
-        https://github.com/googlefonts/noto-cjk/releases/latest/download/Noto_Sans_CJK_sc.zip && \
-    unzip -q /tmp/NotoSansSC.zip -d /usr/share/fonts/ && \
-    rm -f /tmp/NotoSansSC.zip && \
     fc-cache -fv
 
 # 安装 Node.js
