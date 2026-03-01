@@ -41,6 +41,8 @@ QVeris is building the platform for connecting AI Agents to enterprise-grade ski
 git clone https://github.com/QVerisAI/QVerisBot.git
 cd QVerisBot-docker
 # build the image; it pre-populates /root/.config/matplotlib/matplotlibrc
+# the Dockerfile now installs fontconfig and fetches Noto CJK fonts directly
+# since AlmaLinux’s repos lack the google-noto-sans-cjk-ttc package
 docker build -f docker/Dockerfile -t qverisbot:latest .
 # run the container; entrypoint will also ensure the file exists at startup
 docker run -d --name qverisbot qverisbot:latest

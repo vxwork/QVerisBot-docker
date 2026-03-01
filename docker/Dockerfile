@@ -3,8 +3,17 @@ RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
 RUN dnf install -y net-tools git curl python3 python3-pip tar && dnf clean all
 
 # 安装中文字体支持并刷新缓存
-RUN dnf install -y fontconfig google-noto-sans-cjk-ttc && \
+# note: the `google-noto-sans-cjk-ttc` package is not available
+# in the default AlmaLinux 10 repositories; install fontconfig and
+# then download Noto CJK manually.
+RUN dnf install -y fontconfig && \
     dnf clean all && \
+    \
+    # grab a CJK subset from Google Fonts releases (Chinese simplified)
+    curl -fsSL -o /tmp/NotoSansSC.zip \
+        https://github.com/googlefonts/noto-cjk/releases/download/2.004/Noto_Sans_CJK_sc.zip && \
+    unzip -q /tmp/NotoSansSC.zip -d /usr/share/fonts/ && \
+    rm -f /tmp/NotoSansSC.zip && \
     fc-cache -fv
 
 # 安装 Node.js
