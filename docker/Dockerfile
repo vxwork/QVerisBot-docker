@@ -6,7 +6,17 @@ RUN dnf install -y net-tools git curl python3 python3-pip tar && dnf clean all
 # EPEL provides a packaged set of Noto CJK fonts; install that instead of
 # downloading manually.  (Note: the package name is `google-noto-sans-cjk-fonts`.)
 RUN dnf install -y fontconfig epel-release && \
-    dnf install -y google-noto-sans-cjk-fonts && \
+    # enable CRB to satisfy some EPEL dependencies if needed
+    dnf config-manager --set-enabled crb || true && \
+    dnf makecache && \
+    dnf install -y \
+        wqy-zenhei-fonts \
+        # microhei is not available in AlmaLinux/EPEL; zenhei provides Chinese support
+        google-noto-sans-cjk-fonts \
+        # pick a DejaVu family package, not "fonts-dejavu"
+        dejavu-sans-fonts \
+        # include all Noto fonts for completeness
+        google-noto-fonts-all && \
     dnf clean all && \
     fc-cache -fv
 
@@ -33,10 +43,14 @@ RUN pip install matplotlib numpy reportlab
 
 # 预配置 matplotlib 使用中文（镜像构建时生成，容器运行时由 entrypoint 进一步确认）
 RUN mkdir -p /root/.config/matplotlib && \
-    printf "font.family: sans-serif\nfont.sans-serif: Noto Sans CJK SC, DejaVu Sans\naxes.unicode_minus: False\n" \
+    printf "font.family: sans-serif\nfont.sans-serif: WenQuanYi Zen Hei, Noto Sans CJK SC, DejaVu Sans\naxes.unicode_minus: False\n" \
         > /root/.config/matplotlib/matplotlibrc
 # 暴露端口
 EXPOSE 18789
+# 设置环境变量
+ENV LANG=zh_CN.UTF-8
+ENV LC_ALL=zh_CN.UTF-8
+
 # 使用入口脚本启动（关键修改）
 COPY docker/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

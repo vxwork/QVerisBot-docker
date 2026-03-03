@@ -6,7 +6,7 @@ if [ ! -f /root/.config/matplotlib/matplotlibrc ]; then
     mkdir -p /root/.config/matplotlib
     cat <<'EOF' >/root/.config/matplotlib/matplotlibrc
 font.family: sans-serif
-font.sans-serif: Noto Sans CJK SC, DejaVu Sans
+font.sans-serif: WenQuanYi Zen Hei, Noto Sans CJK SC, DejaVu Sans
 axes.unicode_minus: False
 EOF
     echo "✅ 已生成 /root/.config/matplotlib/matplotlibrc"
