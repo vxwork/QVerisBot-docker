@@ -1,6 +1,8 @@
 FROM almalinux:10.1-minimal
 RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
-RUN dnf install -y net-tools git curl python3 python3-pip tar && dnf clean all
+RUN dnf install -y net-tools git curl python3 python3-pip tar glibc-langpack-zh && dnf clean all && \
+    # generate Chinese locale to avoid locale warnings during `docker exec`
+    localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 || true
 
 # 安装中文字体支持并刷新缓存
 # EPEL provides a packaged set of Noto CJK fonts; install that instead of
@@ -50,6 +52,7 @@ EXPOSE 18789
 # 设置环境变量
 ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
+# ensure locale is available at runtime (should already be generated above)
 
 # 使用入口脚本启动（关键修改）
 COPY docker/docker-entrypoint.sh /usr/local/bin/
