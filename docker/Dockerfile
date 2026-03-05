@@ -28,6 +28,10 @@ RUN curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && \
     node --version && npm --version
 # 安装 pnpm
 RUN npm install -g pnpm
+
+# 安装 PyYAML 用于处理 pnpm-workspace.yaml
+RUN pip install pyyaml
+
 # Git 配置
 # 配置git全局设置
 RUN git config --global --add url."https://github.com/".insteadOf git@github.com: \
@@ -38,6 +42,53 @@ RUN git config --global --add url."https://github.com/".insteadOf git@github.com
 WORKDIR /app
 
 RUN git clone https://github.com/QVerisAI/QVerisBot.git .
+
+# 确保 pnpm-workspace.yaml 中 onlyBuiltDependencies 包含所有必需的包
+RUN python3 << 'EOF'
+import yaml
+import sys
+
+# 读取pnpm-workspace.yaml
+with open('pnpm-workspace.yaml', 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
+
+# 确保onlyBuiltDependencies存在
+if 'onlyBuiltDependencies' not in config:
+    config['onlyBuiltDependencies'] = []
+
+# 必需的依赖列表
+required_deps = [
+    "@tloncorp/api",
+    "@lydell/node-pty",
+    "@matrix-org/matrix-sdk-crypto-nodejs",
+    "@napi-rs/canvas",
+    "@whiskeysockets/baileys",
+    "authenticate-pam",
+    "esbuild",
+    "node-llama-cpp",
+    "protobufjs",
+    "sharp"
+]
+
+# 添加缺失的依赖
+current_deps = set(config['onlyBuiltDependencies'])
+for dep in required_deps:
+    if dep not in current_deps:
+        config['onlyBuiltDependencies'].append(dep)
+        print(f"Added: {dep}")
+
+# 排序依赖列表（保持一致性）
+config['onlyBuiltDependencies'] = sorted(config['onlyBuiltDependencies'])
+
+# 写回pnpm-workspace.yaml
+with open('pnpm-workspace.yaml', 'w', encoding='utf-8') as f:
+    yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+print(f"Total dependencies in onlyBuiltDependencies: {len(config['onlyBuiltDependencies'])}")
+EOF
+
+# 显示修改后的配置以供验证
+RUN echo "=== Final pnpm-workspace.yaml ===" && cat pnpm-workspace.yaml
 
 # 安装依赖
 RUN pnpm install && pnpm ui:build && pnpm build && pnpm openclaw setup
