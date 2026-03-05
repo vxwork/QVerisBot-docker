@@ -207,6 +207,9 @@ RUN pnpm install && pnpm ui:build && pnpm build && pnpm openclaw setup
 # 裁剪为仅生产依赖，减小最终镜像体积
 RUN pnpm prune --prod && pnpm store prune || true
 
+# 确保扩展的运行时依赖存在（prune 后可能被裁掉，网关动态加载扩展时需要）
+RUN pnpm add @larksuiteoapi/node-sdk -w --save-prod || true
+
 # 运行时阶段
 FROM almalinux:10.1-minimal
 
