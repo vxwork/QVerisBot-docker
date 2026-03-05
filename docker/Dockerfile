@@ -174,10 +174,7 @@ print("=== package.json pnpm configuration complete ===")
 PYEOF
 
 # 安装依赖并构建（在构建阶段完成所有重型操作）
-RUN pnpm install --recursive --force
-RUN pnpm ui:build
-RUN pnpm build
-RUN pnpm openclaw setup
+RUN pnpm install && pnpm ui:build && pnpm build && pnpm openclaw setup
 
 # 裁剪为仅生产依赖，减小最终镜像体积
 RUN pnpm prune --prod && pnpm store prune || true
