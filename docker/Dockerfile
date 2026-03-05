@@ -43,24 +43,16 @@ WORKDIR /app
 
 RUN git clone https://github.com/QVerisAI/QVerisBot.git .
 
-# 确保 pnpm-workspace.yaml 中 onlyBuiltDependencies 包含所有必需的包
+# 确保 pnpm-workspace.yaml 中 onlyBuiltDependencies 包含所有必需的包（包括嵌套工作区）
 RUN python3 << 'EOF'
 import yaml
-import sys
 import os
-
-# 读取pnpm-workspace.yaml
-with open('pnpm-workspace.yaml', 'r', encoding='utf-8') as f:
-    config = yaml.safe_load(f)
-
-# 确保onlyBuiltDependencies存在
-if 'onlyBuiltDependencies' not in config:
-    config['onlyBuiltDependencies'] = []
+import glob
 
 # 必需的依赖列表（包含所有可能的构建依赖）
 required_deps = [
     "@tloncorp/api",
-    "@tloncorp/api-beta",  # 添加完整的github URL变体
+    "@tloncorp/api-beta",
     "@lydell/node-pty",
     "@matrix-org/matrix-sdk-crypto-nodejs",
     "@napi-rs/canvas",
@@ -72,25 +64,84 @@ required_deps = [
     "sharp"
 ]
 
-# 添加缺失的依赖
-current_deps = set(config['onlyBuiltDependencies'])
-for dep in required_deps:
-    if dep not in current_deps:
-        config['onlyBuiltDependencies'].append(dep)
-        print(f"Added: {dep}")
+def update_workspace_yaml(filepath):
+    """更新单个pnpm-workspace.yaml文件"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        
+        if config is None:
+            config = {}
+        
+        # 确保onlyBuiltDependencies存在
+        if 'onlyBuiltDependencies' not in config:
+            config['onlyBuiltDependencies'] = []
+        
+        # 添加缺失的依赖
+        current_deps = set(config['onlyBuiltDependencies'])
+        added = []
+        for dep in required_deps:
+            if dep not in current_deps:
+                config['onlyBuiltDependencies'].append(dep)
+                added.append(dep)
+        
+        if added or 'onlyBuiltDependencies' not in config:
+            # 排序依赖列表
+            config['onlyBuiltDependencies'] = sorted(config['onlyBuiltDependencies'])
+            
+            # 写回pnpm-workspace.yaml
+            with open(filepath, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            
+            status = "UPDATED" if added else "VERIFIED"
+            print(f"{status}: {filepath}")
+            if added:
+                for dep in added:
+                    print(f"  + {dep}")
+        else:
+            print(f"OK: {filepath}")
+        
+        return True
+    except Exception as e:
+        print(f"ERROR in {filepath}: {e}")
+        return False
 
-# 排序依赖列表（保持一致性）
-config['onlyBuiltDependencies'] = sorted(config['onlyBuiltDependencies'])
+# 找到所有的pnpm-workspace.yaml或package.json文件
+root_yaml = 'pnpm-workspace.yaml'
+if os.path.exists(root_yaml):
+    update_workspace_yaml(root_yaml)
 
-# 写回pnpm-workspace.yaml
-with open('pnpm-workspace.yaml', 'w', encoding='utf-8') as f:
-    yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+# 递归查找所有子目录中的pnpm-workspace.yaml
+for yaml_file in glob.glob('**/pnpm-workspace.yaml', recursive=True):
+    if yaml_file != root_yaml:
+        update_workspace_yaml(yaml_file)
 
-print(f"Total dependencies in onlyBuiltDependencies: {len(config['onlyBuiltDependencies'])}")
+# 同时处理package.json中可能包含的workspaces配置
+for pkg_file in glob.glob('**/package.json', recursive=True):
+    try:
+        with open(pkg_file, 'r', encoding='utf-8') as f:
+            import json
+            data = json.load(f)
+        
+        # 检查是否是工作区package.json
+        if 'pnpm' in data and 'overrides' in data.get('pnpm', {}):
+            # 某些项目在package.json中配置pnpm
+            if 'onlyBuiltDependencies' not in data.get('pnpm', {}):
+                if 'pnpm' not in data:
+                    data['pnpm'] = {}
+                data['pnpm']['onlyBuiltDependencies'] = sorted(required_deps)
+                with open(pkg_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2)
+                print(f"UPDATED package.json: {pkg_file}")
+    except:
+        pass
+
+print("\n=== Workspace configuration update completed ===")
 EOF
 
-# 显示修改后的配置以供验证
-RUN echo "=== Final pnpm-workspace.yaml ===" && cat pnpm-workspace.yaml
+# 显示修改后的主配置以供验证
+RUN echo "=== Root pnpm-workspace.yaml ===" && cat pnpm-workspace.yaml && \
+    echo -e "\n=== All YAML files found ===" && find . -name "pnpm-workspace.yaml" -type f 2>/dev/null | head -10
 
 # 创建 .npmrc 配置文件，强制允许git依赖的脚本执行
 RUN cat > .npmrc << 'NPMRC'
@@ -103,11 +154,67 @@ strict-peer-dependencies=false
 engine-strict=false
 NPMRC
 
+# 递归搜索所有package.json并更新pnpm配置
+RUN python3 << 'PYEOF'
+import json
+import os
+import glob
+
+required_deps = [
+    "@tloncorp/api",
+    "@tloncorp/api-beta",
+    "@lydell/node-pty",
+    "@matrix-org/matrix-sdk-crypto-nodejs",
+    "@napi-rs/canvas",
+    "@whiskeysockets/baileys",
+    "authenticate-pam",
+    "esbuild",
+    "node-llama-cpp",
+    "protobufjs",
+    "sharp"
+]
+
+# 处理所有package.json
+for pkg_file in glob.glob('**/package.json', recursive=True):
+    try:
+        with open(pkg_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        modified = False
+        
+        # 确保pnpm配置存在
+        if 'pnpm' not in data:
+            data['pnpm'] = {}
+        
+        # 设置或更新onlyBuiltDependencies
+        if 'onlyBuiltDependencies' not in data['pnpm'] or not data['pnpm']['onlyBuiltDependencies']:
+            data['pnpm']['onlyBuiltDependencies'] = sorted(required_deps)
+            modified = True
+        else:
+            # 合并依赖
+            current = set(data['pnpm']['onlyBuiltDependencies'])
+            for dep in required_deps:
+                if dep not in current:
+                    data['pnpm']['onlyBuiltDependencies'].append(dep)
+                    modified = True
+            if modified:
+                data['pnpm']['onlyBuiltDependencies'] = sorted(data['pnpm']['onlyBuiltDependencies'])
+        
+        if modified:
+            with open(pkg_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            print(f"UPDATED: {pkg_file}")
+    except Exception as e:
+        pass
+
+print("=== package.json pnpm configuration complete ===")
+PYEOF
+
 # 清理相关缓存以确保pnpm重新读取配置
 RUN rm -rf node_modules .pnpm-debug.log pnpm-lock.yaml 2>/dev/null || true
 
-# 使用--force标志强制安装，跳过某些检查
-RUN pnpm install --force && pnpm ui:build && pnpm build && pnpm openclaw setup
+# 使用递归标志安装依赖
+RUN pnpm install --recursive --force && pnpm ui:build && pnpm build && pnpm openclaw setup
 # 安装 Python 依赖
 RUN pip install matplotlib numpy reportlab
 
