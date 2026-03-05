@@ -1,6 +1,9 @@
 # 多阶段构建：构建阶段
 FROM almalinux:10.1-minimal AS builder
 
+# CI 环境下 pnpm prune 等需要此变量，否则会因无 TTY 中止
+ENV CI=true
+
 RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
 RUN dnf install -y git curl python3 python3-pip tar glibc-langpack-zh && dnf clean all && \
     localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 || true
@@ -92,24 +95,6 @@ for yaml_file in glob.glob('**/pnpm-workspace.yaml', recursive=True):
     if yaml_file != root_yaml:
         update_workspace_yaml(yaml_file)
 
-# 处理 package.json
-for pkg_file in glob.glob('**/package.json', recursive=True):
-    try:
-        with open(pkg_file, 'r', encoding='utf-8') as f:
-            import json
-            data = json.load(f)
-        
-        if 'pnpm' in data and 'overrides' in data.get('pnpm', {}):
-            if 'onlyBuiltDependencies' not in data.get('pnpm', {}):
-                if 'pnpm' not in data:
-                    data['pnpm'] = {}
-                data['pnpm']['onlyBuiltDependencies'] = sorted(required_deps)
-                with open(pkg_file, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2)
-                print(f"UPDATED package.json: {pkg_file}")
-    except:
-        pass
-
 print("\n=== Workspace configuration update completed ===")
 EOF
 
@@ -121,11 +106,10 @@ strict-peer-dependencies=false
 engine-strict=false
 NPMRC
 
-# 更新 package.json 中的 pnpm 配置
+# 仅更新根目录 package.json 的 pnpm.onlyBuiltDependencies（子包中此项不生效会触发 WARN）
 RUN python3 << 'PYEOF'
 import json
 import os
-import glob
 
 required_deps = [
     "@tloncorp/api",
@@ -141,35 +125,21 @@ required_deps = [
     "sharp"
 ]
 
-for pkg_file in glob.glob('**/package.json', recursive=True):
+root_pkg = 'package.json'
+if os.path.exists(root_pkg):
     try:
-        with open(pkg_file, 'r', encoding='utf-8') as f:
+        with open(root_pkg, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
-        modified = False
-        
         if 'pnpm' not in data:
             data['pnpm'] = {}
-        
-        if 'onlyBuiltDependencies' not in data['pnpm'] or not data['pnpm']['onlyBuiltDependencies']:
-            data['pnpm']['onlyBuiltDependencies'] = sorted(required_deps)
-            modified = True
-        else:
-            current = set(data['pnpm']['onlyBuiltDependencies'])
-            for dep in required_deps:
-                if dep not in current:
-                    data['pnpm']['onlyBuiltDependencies'].append(dep)
-                    modified = True
-            if modified:
-                data['pnpm']['onlyBuiltDependencies'] = sorted(data['pnpm']['onlyBuiltDependencies'])
-        
-        if modified:
-            with open(pkg_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-            print(f"UPDATED: {pkg_file}")
+        data['pnpm']['onlyBuiltDependencies'] = sorted(required_deps)
+        with open(root_pkg, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        print("UPDATED root package.json pnpm.onlyBuiltDependencies")
     except Exception as e:
-        pass
-
+        print(f"SKIP root package.json: {e}")
+else:
+    print("No root package.json, skip")
 print("=== package.json pnpm configuration complete ===")
 PYEOF
 
@@ -222,6 +192,9 @@ EXPOSE 18789
 # 设置环境变量
 ENV LANG=zh_CN.UTF-8
 ENV LC_ALL=zh_CN.UTF-8
+
+# 明确以 root 用户运行
+USER root
 
 # 入口脚本
 COPY docker/docker-entrypoint.sh /usr/local/bin/
