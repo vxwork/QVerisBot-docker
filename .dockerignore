@@ -1,0 +1,66 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Dependencies（构建在镜像内 clone 并 install，不需要本地）
+node_modules
+**/node_modules
+.pnpm-store
+**/.pnpm-store
+
+# 测试与覆盖率
+**/__tests__
+**/test
+**/tests
+**/*.test.js
+**/*.test.ts
+**/*.spec.js
+**/*.spec.ts
+coverage
+.nyc_output
+**/.jest
+
+# 文档与示例（运行时不需要）
+docs
+**/docs
+*.md
+!README.md
+examples
+**/examples
+
+# 日志与临时
+*.log
+**/*.log
+tmp
+temp
+.tmp
+.temp
+.cache
+**/.cache
+
+# IDE 与本地配置
+.idea
+.vscode
+*.swp
+*.swo
+.DS_Store
+
+# 环境与密钥（不应进镜像）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Docker 构建产物（避免递归）
+Dockerfile*
+.dockerignore
+
+# 其他大/无用目录
+dist
+**/dist
+build
+**/build
+*.tgz
+*.tar.gz

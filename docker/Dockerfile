@@ -2,7 +2,7 @@
 FROM almalinux:10.1-minimal AS builder
 
 RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
-RUN dnf install -y net-tools git curl python3 python3-pip tar glibc-langpack-zh && dnf clean all && \
+RUN dnf install -y git curl python3 python3-pip tar glibc-langpack-zh && dnf clean all && \
     localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 || true
 
 # 安装 Node.js
@@ -173,17 +173,20 @@ for pkg_file in glob.glob('**/package.json', recursive=True):
 print("=== package.json pnpm configuration complete ===")
 PYEOF
 
-# 安装依赖并构建
+# 安装依赖并构建（在构建阶段完成所有重型操作）
 RUN pnpm install --recursive --force
 RUN pnpm ui:build
 RUN pnpm build
 RUN pnpm openclaw setup
 
+# 裁剪为仅生产依赖，减小最终镜像体积
+RUN pnpm prune --prod && pnpm store prune || true
+
 # 运行时阶段
 FROM almalinux:10.1-minimal
 
 RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
-RUN dnf install -y net-tools curl python3 python3-pip tar glibc-langpack-zh fontconfig && dnf clean all && \
+RUN dnf install -y curl python3 python3-pip tar glibc-langpack-zh fontconfig && dnf clean all && \
     localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 || true
 
 # 安装中文字体
