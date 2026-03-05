@@ -38,9 +38,7 @@ RUN git config --global --add url."https://github.com/".insteadOf git@github.com
 WORKDIR /app
 
 RUN git clone https://github.com/QVerisAI/QVerisBot.git .
-# add package to pnpms allowlist so git-hosted deps with build scripts can run
-# pnpm reads onlyBuiltDependencies from package.json's "onlyBuiltDependencies" field
-RUN sed -i 's/"sharp"$/"sharp",\n      "@tloncorp\/api"/' package.json
+
 # 安装依赖
 RUN pnpm install && pnpm ui:build && pnpm build && pnpm openclaw setup
 # 安装 Python 依赖
