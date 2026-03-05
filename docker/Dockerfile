@@ -23,7 +23,7 @@ RUN git config --global --add url."https://github.com/".insteadOf git@github.com
 
 WORKDIR /app
 
-RUN git clone https://github.com/QVerisAI/QVerisBot.git .
+RUN git clone --branch personal/zht  https://github.com/QVerisAI/QVerisBot.git .
 
 # 处理 pnpm-workspace.yaml 和 package.json 配置
 RUN python3 << 'EOF'
