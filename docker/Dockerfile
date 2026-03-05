@@ -39,11 +39,8 @@ WORKDIR /app
 
 RUN git clone https://github.com/QVerisAI/QVerisBot.git .
 # add package to pnpms allowlist so git-hosted deps with build scripts can run
-# this mirrors the upstream fix in QVerisBot itself; without it the build
-# complained about @tloncorp/api not being in onlyBuiltDependencies.
-RUN grep -q "@tloncorp/api" pnpm-workspace.yaml || \
-    sed -i '/^onlyBuiltDependencies:/a\  - "@tloncorp/api"' pnpm-workspace.yaml
-RUN echo "=== pnpm-workspace.yaml after patch ===" && sed -n '1,15p' pnpm-workspace.yaml
+# pnpm reads onlyBuiltDependencies from package.json's "onlyBuiltDependencies" field
+RUN sed -i 's/"sharp"$/"sharp",\n      "@tloncorp\/api"/' package.json
 # 安装依赖
 RUN pnpm install && pnpm ui:build && pnpm build && pnpm openclaw setup
 # 安装 Python 依赖
