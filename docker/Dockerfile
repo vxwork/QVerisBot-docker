@@ -74,7 +74,7 @@ COPY --from=ext-deps /out/ ./extensions/
 
 # Install dependencies with cache optimization
 RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
-    NODE_OPTIONS="--max-old-space-size=2048" pnpm install --frozen-lockfile
+    NODE_OPTIONS="--max-old-space-size=2048" pnpm install --no-frozen-lockfile
 
 # Copy full source code again (this will use cache if extensions didn't change)
 RUN rm -rf extensions && git checkout extensions
