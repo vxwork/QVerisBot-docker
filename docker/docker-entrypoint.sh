@@ -1,83 +1,96 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# 确保 matplotlib 配置存在
-if [ ! -f /root/.config/matplotlib/matplotlibrc ]; then
-    mkdir -p /root/.config/matplotlib
-    cat <<'EOF' >/root/.config/matplotlib/matplotlibrc
-font.family: sans-serif
-font.sans-serif: WenQuanYi Zen Hei, Noto Sans CJK SC, DejaVu Sans, sans-serif
-axes.unicode_minus: False
-EOF
-    echo "✅ matplotlibrc 已生成（优先中文字体）"
-fi
+# ==================== 配置路径（Docker 中建议使用 /root/.openclaw 或挂载卷） ====================
+CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/root/.openclaw}"
+CONFIG_FILE="${CONFIG_DIR}/openclaw.json"
+PAIRING_DIR="${CONFIG_DIR}/pairing"
+DEVICE_JSON="${PAIRING_DIR}/device.json"
 
-# ==================== OpenClaw 配置与启动逻辑 ====================
+# ==================== 日志辅助函数（更统一、支持级别） ====================
+log_info()  { echo "ℹ️  ${*}" >&2; }
+log_warn()  { echo "⚠️  ${*}" >&2; }
+log_error() { echo "❌  ${*}" >&2; }
+log_success() { echo "✅  ${*}" >&2; }
 
-CONFIG_DIR="/root/.openclaw"
-CONFIG_FILE="$CONFIG_DIR/openclaw.json"
-PAIRING_DIR="$CONFIG_DIR/pairing"
-DEVICE_JSON="$PAIRING_DIR/device.json"
+# ==================== 禁用 TypeScript 自动编译（提升启动速度） ====================
+export OPENCLAW_SKIP_TS_BUILD="true"
+log_info "已设置 OPENCLAW_SKIP_TS_BUILD=true，跳过 TypeScript 编译检查"
 
-# 决定最终使用的 gateway token
-if [ -n "${OPENCLAW_GATEWAY_TOKEN}" ]; then
-    # 环境变量已定义 → 优先使用它（常见于 docker run -e 或 compose env_file）
-    GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN}"
-    echo "ℹ️ 检测到环境变量 OPENCLAW_GATEWAY_TOKEN，使用它作为 gateway token"
-else
-    # 无环境变量 → 按原逻辑随机生成（仅首次）
-    if [ ! -f "$DEVICE_JSON" ]; then
-        echo "⚠️ 首次启动且无预设 token，进行初始化..."
-
-        mkdir -p "$PAIRING_DIR"
-
-        # 生成随机 token（优先 openssl，fallback urandom+sha256）
-        if command -v openssl >/dev/null 2>&1; then
-            GATEWAY_TOKEN=$(openssl rand -hex 32)
-        else
-            GATEWAY_TOKEN=$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)
-        fi
-
-        # 写入 device.json（OpenClaw pairing 机制会用这个）
-        cat > "$DEVICE_JSON" <<EOF
-{
-  "token": "$GATEWAY_TOKEN",
-  "createdAt": "$(date -Iseconds)"
-}
-EOF
-        echo "✅ 新生成的 gateway token：$GATEWAY_TOKEN （保存在 $DEVICE_JSON）"
+# ==================== 生成随机 token 的函数（更健壮） ====================
+generate_token() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 32
+    elif command -v head && command -v sha256sum >/dev/null 2>&1; then
+        head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1
     else
-        # 已存在 pairing/device.json → 从中读取 token（避免重复生成）
-        GATEWAY_TOKEN=$(jq -r '.token' "$DEVICE_JSON" 2>/dev/null || echo "")
-        if [ -z "$GATEWAY_TOKEN" ]; then
-            echo "❌ device.json 存在但无法读取 token，强制重新生成"
-            GATEWAY_TOKEN=$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)
-            jq --arg t "$GATEWAY_TOKEN" '.token = $t' "$DEVICE_JSON" > /tmp/device.json && mv /tmp/device.json "$DEVICE_JSON"
+        log_error "无法生成安全 token：缺少 openssl 或 urandom+sha256sum"
+        exit 1
+    fi
+}
+
+# ==================== 处理 gateway token 逻辑 ====================
+if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+    GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN}"
+    log_info "使用环境变量 OPENCLAW_GATEWAY_TOKEN 作为 gateway token"
+else
+    mkdir -p "${PAIRING_DIR}" || { log_error "无法创建 pairing 目录"; exit 1; }
+
+    if [ ! -f "${DEVICE_JSON}" ]; then
+        log_warn "首次启动，无预设 token，进行初始化..."
+
+        GATEWAY_TOKEN=$(generate_token)
+
+        jq -n --arg t "${GATEWAY_TOKEN}" --arg ts "$(date -Iseconds)" \
+            '{token: $t, createdAt: $ts}' > "${DEVICE_JSON}" || {
+            log_error "写入 device.json 失败（jq 可能缺失或权限问题）"
+            exit 1
+        }
+
+        log_success "已生成并保存新的 gateway token 到 ${DEVICE_JSON}"
+    else
+        if ! GATEWAY_TOKEN=$(jq -r '.token // empty' "${DEVICE_JSON}" 2>/dev/null); then
+            log_warn "device.json 存在但解析失败，强制重新生成 token"
+            GATEWAY_TOKEN=$(generate_token)
+            jq --arg t "${GATEWAY_TOKEN}" '.token = $t' "${DEVICE_JSON}" > "${DEVICE_JSON}.tmp" &&
+                mv "${DEVICE_JSON}.tmp" "${DEVICE_JSON}" || {
+                log_error "更新 device.json 失败"
+                exit 1
+            }
         fi
-        echo "ℹ️ 从已有 device.json 读取 gateway token"
+        log_info "从已有 ${DEVICE_JSON} 读取 gateway token"
     fi
 fi
 
-# ==================== 启动参数准备 ====================
+# ==================== 准备 gateway 启动参数 ====================
+GATEWAY_ARGS=(
+    "--port"    "${OPENCLAW_GATEWAY_PORT:-18789}"
+    "--verbose"
+    "--token"   "${GATEWAY_TOKEN}"
+)
 
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "⚠️ openclaw.json 不存在，首次启动允许未配置状态"
-    
-    GATEWAY_ARGS="--allow-unconfigured --port 18789 --verbose --token ${GATEWAY_TOKEN}"
+# 可选：支持更多环境变量覆盖
+[ -n "${OPENCLAW_GATEWAY_BIND:-}" ]     && GATEWAY_ARGS+=("--bind"     "${OPENCLAW_GATEWAY_BIND}")
+[ -n "${OPENCLAW_GATEWAY_WS_LOG:-}" ]   && GATEWAY_ARGS+=("--ws-log"   "${OPENCLAW_GATEWAY_WS_LOG}")
+
+# 检查配置文件是否存在
+if [ ! -f "${CONFIG_FILE}" ]; then
+    log_warn "openclaw.json 不存在（首次启动允许未配置状态）"
+    GATEWAY_ARGS+=("--allow-unconfigured")
 else
-    echo "✅ openclaw.json 已存在，直接启动"
-    GATEWAY_ARGS="--port 18789 --verbose --token ${GATEWAY_TOKEN}"
+    log_success "openclaw.json 已存在 → 正常启动"
 fi
 
-# ==================== 执行启动（优先全局命令，兼容 pnpm 方式） ====================
-
+# ==================== 执行启动 ====================
 if command -v openclaw >/dev/null 2>&1; then
-    echo "ℹ️ 使用全局 openclaw 命令启动"
-    exec openclaw gateway $GATEWAY_ARGS
-elif [ -f /app/package.json ] && command -v pnpm >/dev/null 2>&1; then
-    echo "ℹ️ 使用 pnpm openclaw 启动（源码模式）"
-    exec pnpm openclaw gateway $GATEWAY_ARGS
+    log_info "使用全局 openclaw 命令启动"
+    exec openclaw gateway "${GATEWAY_ARGS[@]}"
+elif [ -f "/app/package.json" ] && command -v pnpm >/dev/null 2>&1; then
+    log_info "使用 pnpm 执行 openclaw（源码/开发模式）"
+    exec pnpm openclaw gateway "${GATEWAY_ARGS[@]}"
 else
-    echo "❌ 错误：找不到 openclaw 命令（全局或 pnpm）"
+    log_error "找不到 openclaw 命令（全局安装或 pnpm 方式均不可用）"
+    log_error "当前 PATH: ${PATH}"
+    log_error "请检查 Dockerfile 是否正确安装了 openclaw CLI"
     exit 1
 fi

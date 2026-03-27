@@ -1,77 +1,171 @@
-FROM almalinux:10.1-minimal
-RUN if ! command -v dnf &> /dev/null; then microdnf install -y dnf; fi
-RUN dnf install -y net-tools git curl python3 python3-pip tar glibc-langpack-zh && dnf clean all && \
-    # generate Chinese locale to avoid locale warnings during `docker exec`
-    localedef -i zh_CN -f UTF-8 zh_CN.UTF-8 || true
+# syntax=docker/dockerfile:1.7
 
-# 安装中文字体支持并刷新缓存
-# 添加常用中文字体包，包括文泉驿字体、Noto CJK 以及 DejaVu
-# EPEL 提供的 Noto CJK 包名为 `fonts-noto-cjk`，不过也可以使用
-# google-noto-sans-cjk-fonts。这里我们一并安装。
-RUN dnf install -y fontconfig epel-release && \
-    # enable CRB to satisfy some EPEL dependencies if needed
-    dnf config-manager --set-enabled crb || true && \
-    dnf makecache && \
-    dnf install -y \
-        wqy-zenhei-fonts \
-        # microhei is not available in AlmaLinux/EPEL; zenhei provides Chinese support
-        google-noto-sans-cjk-fonts \
-        # pick a DejaVu family package, not "fonts-dejavu"
-        dejavu-sans-fonts \
-        # include all Noto fonts for completeness
-        google-noto-fonts-all && \
-    dnf clean all && \
-    fc-cache -fv
+# ==================== Stage 1: Extension Dependencies ====================
+# Extract only package.json files from extensions for better cache utilization
+FROM node:24-bookworm-slim AS ext-deps
 
-# 安装 Node.js
-RUN curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash - && \
-    dnf install -y nodejs && \
-    node --version && npm --version
-# 安装 pnpm
-RUN npm install -g pnpm
-# Git 配置
-# 配置git全局设置
-RUN git config --global --add url."https://github.com/".insteadOf git@github.com: \
-    && git config --global --add url."https://github.com/".insteadOf ssh://git@github.com/ \
-    && git config --global --add url."https://github.com/".insteadOf git@github.com:/ \
-    && git config --global --add safe.directory "*"
+ARG OPENCLAW_REPO="https://github.com/openclaw/openclaw.git"
+ARG OPENCLAW_BRANCH="main"
+
+WORKDIR /tmp/openclaw
+
+# Install git and clone repository (shallow clone for speed)
+# Must install ca-certificates first for HTTPS to work
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git && \
+    rm -rf /var/lib/apt/lists/* && \
+    git clone --depth=1 --branch=${OPENCLAW_BRANCH} ${OPENCLAW_REPO} .
+
+WORKDIR /tmp/extensions
+
+# Copy extensions from cloned repository
+RUN cp -r /tmp/openclaw/extensions/. .
+
+RUN mkdir -p /out && \
+    for dir in */; do \
+      if [ -f "$dir/package.json" ]; then \
+        ext_name=$(basename "$dir"); \
+        mkdir -p "/out/$ext_name" && \
+        cp "$dir/package.json" "/out/$ext_name/package.json"; \
+      fi; \
+    done
+
+# ==================== Stage 2: Builder ====================
+FROM node:24-bookworm-slim AS builder
+
+ARG OPENCLAW_REPO="https://github.com/QVerisAI/QVerisBot.git"
+ARG OPENCLAW_BRANCH="main"
+
+# Install base dependencies including git, curl, unzip
+# Must install ca-certificates first for HTTPS operations
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        curl \
+        unzip && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Bun for build process (with retry logic)
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+      if curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL https://bun.sh/install | bash; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 5 ]; then \
+        exit 1; \
+      fi; \
+      sleep $((attempt * 2)); \
+    done
+ENV PATH="/root/.bun/bin:${PATH}"
+
+RUN corepack enable pnpm
 
 WORKDIR /app
 
-RUN export SHELL=/bin/bash && pnpm setup
+# Clone OpenClaw repository (shallow clone)
+RUN git clone --depth=1 --branch=${OPENCLAW_BRANCH} ${OPENCLAW_REPO} .
 
-RUN export PNPM_HOME="/root/.local/share/pnpm" \
-    && export PATH="$PNPM_HOME:$PATH" \
-    && git clone https://github.com/QVerisAI/QVerisBot.git . \
-    && pnpm install \
-    && pnpm ui:build \
-    && pnpm build \
-    && pnpm openclaw setup \
-    && pnpm link --global
+# Copy extension package.json files from ext-deps stage for dependency caching
+COPY --from=ext-deps /out/ ./extensions/
 
-ENV PNPM_HOME="/root/.local/share/pnpm"
-ENV PATH="${PNPM_HOME}:${PATH}"
+# Install dependencies with cache optimization
+RUN --mount=type=cache,id=openclaw-pnpm-store,target=/root/.local/share/pnpm/store,sharing=locked \
+    NODE_OPTIONS="--max-old-space-size=2048" pnpm install --frozen-lockfile
 
-# 验证一下（构建时打印，方便 debug）
-RUN which openclaw || echo "openclaw not found after link" \
-    && ls -la $PNPM_HOME || true
-    
-# 安装 Python 依赖
-RUN pip install matplotlib numpy reportlab fpdf2 weasyprint
+# Copy full source code again (this will use cache if extensions didn't change)
+RUN rm -rf extensions && git checkout extensions
 
-# 预配置 matplotlib 使用中文（镜像构建时生成，容器运行时由 entrypoint 进一步确认）
-# 将常见中文字体放在 sans-serif 列表的前面，matplotlib 会按顺序
-# 选择可用字体渲染中文。这里包含文泉驿 Zen Hei、Noto CJK 以及 DejaVu。
-RUN mkdir -p /root/.config/matplotlib && \
-    printf "font.family: sans-serif\nfont.sans-serif: WenQuanYi Zen Hei, Noto Sans CJK SC, DejaVu Sans\naxes.unicode_minus: False\n" \
-        > /root/.config/matplotlib/matplotlibrc
-        
-EXPOSE 18789
-# 设置环境变量
-ENV LANG=zh_CN.UTF-8
-ENV LC_ALL=zh_CN.UTF-8
+# Build project, prune dependencies, and clean in single layer
+RUN pnpm build && \
+    pnpm ui:build && \
+    touch -r dist/index.js dist/.fresh-marker 2>/dev/null || true && \
+    CI=true pnpm prune --prod && \
+    find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete 2>/dev/null || true && \
+    find node_modules -name "*.md" -delete 2>/dev/null || true && \
+    find node_modules -name "*.ts" -delete 2>/dev/null || true && \
+    find node_modules -name "*.tsx" -delete 2>/dev/null || true && \
+    pnpm store prune && \
+    rm -rf /root/.pnpm-store /root/.cache/pnpm /root/.npm
 
-# Copy entrypoint and make executable
+# ==================== Stage 3: Runtime ====================
+FROM almalinux:10.1 AS runtime
+
+# Set timezone early
+ENV TZ=UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Allow overriding Node.js version at build time (default to latest LTS)
+ARG NODEJS_VERSION="24"
+
+# Install minimal system dependencies in single layer
+# Use dnf with aggressive cleanup for minimal footprint
+RUN dnf install -y --setopt=install_weak_deps=False --nodocs \
+        epel-release && \
+    dnf install -y --setopt=install_weak_deps=False --nodocs \
+        curl \
+        ca-certificates \
+        python3 \
+        python3-pip \
+        procps-ng \
+        hostname \
+        openssl \
+        glibc-langpack-en && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/* /var/log/dnf* /var/log/yum.*
+
+# Install Node.js from Nodesource (version configurable via ARG)
+RUN curl -fsSL https://rpm.nodesource.com/setup_${NODEJS_VERSION}.x | bash - && \
+    dnf install -y --setopt=install_weak_deps=False nodejs && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
+
+# Configure locale using glibc-langpack-en
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+
+# Install Python packages for skills (only essential ones)
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/venv/bin/pip install --no-cache-dir \
+        reportlab \
+        pillow && \
+    /opt/venv/bin/pip cache purge
+
+WORKDIR /app
+
+# Copy runtime essentials from builder (without node_modules)
+# Note: Docker automatically optimizes multiple COPY instructions from the same 
+# source stage into a single layer, so keeping them separate improves readability
+# without increasing image size.
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=builder /app/openclaw.mjs ./openclaw.mjs
+COPY --from=builder /app/extensions ./extensions
+# Copy docs/reference/templates (required for workspace setup)
+COPY --from=builder /app/docs/reference/templates ./docs/reference/templates
+
+# Install production dependencies, clean up, set permissions, and create symlink in single layer
+RUN corepack enable pnpm && \
+    pnpm install --frozen-lockfile --prod && \
+    pnpm store prune && \
+    rm -rf /root/.pnpm-store /root/.cache/pnpm /root/.npm && \
+    find node_modules -name "*.md" -delete 2>/dev/null || true && \
+    find node_modules -name "*.ts" -delete 2>/dev/null || true && \
+    find node_modules -name "*.tsx" -delete 2>/dev/null || true && \
+    chmod -R 755 /app && \
+    ln -sf /app/openclaw.mjs /usr/local/bin/openclaw
+
+# Set proper permissions and create symlink (already done in RUN above)
+# Setup Python virtual environment path
+ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH"
+
+# Copy entrypoint script
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
